@@ -42,15 +42,17 @@ export async function GET(
       }
     }
 
+    const p = prediction as any;
+
     return NextResponse.json({
       verified: onChainVerified && prediction.onChainStatus === 'confirmed',
       prediction: {
         id: prediction.id,
-        title: prediction.title,
-        category: prediction.category,
-        asset: prediction.asset,
-        question: prediction.question,
-        predictedOutcome: prediction.predictedOutcome,
+        title: p.title,
+        category: p.category,
+        asset: p.asset,
+        question: p.question,
+        predictedOutcome: p.predictedOutcome,
         author: {
           displayName: prediction.author.displayName,
           walletAddress: prediction.author.walletAddress,
@@ -62,8 +64,8 @@ export async function GET(
         onChainStatus: prediction.onChainStatus,
         solanaTxSig: prediction.solanaTxSig,
         contentHash: prediction.contentHash,
-        verificationSource: prediction.predictionSource,
-        externalUrl: prediction.externalUrl,
+        verificationSource: p.predictionSource,
+        externalUrl: p.externalUrl,
       },
     });
   } catch (error) {

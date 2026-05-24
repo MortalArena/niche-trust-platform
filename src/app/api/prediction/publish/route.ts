@@ -5,27 +5,33 @@ import { z } from 'zod';
 import { writeHashOnChain } from '@/lib/solana/memo';
 
 const publishSchema = z.object({
+  // Core prediction data
   title: z.string().min(1).max(500),
-  description: z.string().max(5000).optional(),
+  description: z.string().max(10000).optional(),
   category: z.enum(['price_action', 'binary', 'multiple_choice', 'numerical', 'polymarket', 'kalshi', 'stock', 'manual']).default('price_action'),
-  
+
+  // Price action / stock / numerical fields
   asset: z.string().optional(),
   entryPrice: z.number().positive().optional(),
   targetPrice: z.number().positive().optional(),
   stopLoss: z.number().positive().optional(),
-  
+  timeframe: z.string().optional(),
+
+  // Binary / multiple choice fields
   question: z.string().optional(),
   predictedOutcome: z.string().optional(),
-  timeframe: z.string().optional(),
-  
+
+  // External platform linking
   externalUrl: z.string().url().optional(),
   externalMarketId: z.string().optional(),
   predictionSource: z.enum(['internal', 'polymarket', 'kalshi']).default('internal'),
-  
+
+  // E2EE fields (client-side encrypted payload)
   encryptedPayload: z.string(),
   nonce: z.string(),
   contentHash: z.string().length(64),
-  
+
+  // Visibility & access
   visibility: z.enum(['public', 'group', 'private']).default('group'),
   groupId: z.string().optional(),
   expiresAt: z.string().datetime().optional(),

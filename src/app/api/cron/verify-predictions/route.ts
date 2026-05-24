@@ -69,8 +69,9 @@ export async function GET(req: NextRequest) {
 
     let verifiedCount = 0;
     for (const pred of expiredPredictions) {
+      const p = pred as any;
       try {
-        if (pred.externalMarketId) {
+        if (p.externalMarketId) {
           // Try to fetch outcome from Polymarket/Kalshi
           // For now, mark as requires manual verification
           await prisma.prediction.update({
@@ -78,14 +79,14 @@ export async function GET(req: NextRequest) {
             data: { outcome: 'VOID', verifiedAt: new Date() },
           });
           verifiedCount++;
-        } else if (pred.asset && pred.targetPrice) {
+        } else if (p.asset && p.targetPrice) {
           // Fetch current price and compare
           // Simple price check via Jupiter API for Solana tokens
-          const price = await fetchTokenPrice(pred.asset);
-          if (price !== null && pred.targetPrice) {
-            const isWin = pred.category === 'price_action' 
-              ? price >= Number(pred.targetPrice)
-              : price <= Number(pred.targetPrice);
+          const price = await fetchTokenPrice(p.asset);
+          if (price !== null && p.targetPrice) {
+            const isWin = p.category === 'price_action' 
+              ? price >= Number(p.targetPrice)
+              : price <= Number(p.targetPrice);
             
             await prisma.prediction.update({
               where: { id: pred.id },
