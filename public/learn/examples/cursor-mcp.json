@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "niche-trust": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch"],
+      "env": {
+        "FETCH_MCP_ALLOWED_ORIGINS": "http://localhost:3000"
+      },
+      "comment": "Example: use a custom MCP server that wraps GET /api/agent/v1/feed with your nt_live_ key. See /learn/mcp for a minimal Node server."
+    }
+  }
+}

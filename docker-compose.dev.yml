@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: niche-postgres
+    environment:
+      POSTGRES_USER: niche
+      POSTGRES_PASSWORD: niche_dev_password
+      POSTGRES_DB: niche_trust
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U niche']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: niche-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  synapse:
+    image: matrixdotorg/synapse:latest
+    container_name: niche-synapse
+    ports:
+      - '8008:8008'
+    volumes:
+      - synapse_data:/data
+      - ./docker/synapse/homeserver.yaml:/data/homeserver.yaml:ro
+    environment:
+      SYNAPSE_SERVER_NAME: localhost
+      SYNAPSE_REPORT_STATS: 'no'
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  synapse_data:

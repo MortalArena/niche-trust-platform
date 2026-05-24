@@ -1,0 +1,8 @@
+-- Run if group pages crash: psql or prisma db execute
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "expertHeadline" TEXT;
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "expertBio" TEXT;
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "expertServiceTypes" TEXT[] DEFAULT ARRAY[]::TEXT[];
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "acceptsAgentApi" BOOLEAN DEFAULT true;
+ALTER TABLE "Group" ADD COLUMN IF NOT EXISTS "serviceTypes" TEXT[] DEFAULT ARRAY[]::TEXT[];
+ALTER TABLE "Group" ADD COLUMN IF NOT EXISTS "allowPublicComments" BOOLEAN DEFAULT true;
+ALTER TABLE "AgentKey" ADD COLUMN IF NOT EXISTS "keyPrefix" TEXT DEFAULT '';

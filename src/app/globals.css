@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+/* Polymarket-inspired light theme (default) */
+:root,
+[data-theme='light'] {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-hover: #f4f4f5;
+  --text-primary: #09090b;
+  --text-secondary: #52525b;
+  --text-muted: #a1a1aa;
+  --border: #e4e4e7;
+  --accent: #2563eb;
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --bg: #09090b;
+  --surface: #18181b;
+  --surface-hover: #27272a;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --border: #3f3f46;
+  --accent: #7c3aed;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  background: var(--bg);
+  color: var(--text-primary);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+}
+
+select,
+input,
+textarea,
+option {
+  background-color: var(--surface);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+select:focus,
+input:focus,
+textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+a {
+  color: inherit;
+}
+
+/* Horizontal nav scrollbar */
+.scrollbar-thin::-webkit-scrollbar {
+  height: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}

@@ -1,0 +1,356 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  // 🔐 Auth
+  email         String?  @unique
+  name          String?
+  image         String?
+  walletAddress String?  @unique
+  // 👤 Privacy
+  isAnonymous   Boolean  @default(false)
+  displayName   String?
+  bio           String?
+  // 🏷️ Roles & Settings
+  role              String   @default("user")
+  matrixUserId      String?  @unique
+  expertHeadline    String?
+  expertBio         String?  @db.Text
+  expertServiceTypes String[] @default([])
+  acceptsAgentApi   Boolean  @default(true)
+  expertBalanceUsd  Decimal  @default(0)
+  totalPaidOutUsd   Decimal  @default(0)
+  isSetupComplete   Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  wallets       Wallet[]
+  expertPayouts ExpertPayout[]
+  expertBots    ExpertBot[]
+  groupComments GroupComment[]
+  predictions   Prediction[]
+  scores        TraderScore[]
+  ownedGroups   Group[]        @relation("GroupOwner")
+  memberships   GroupMember[]
+  subscriptions Subscription[]
+  groupReviews  GroupReview[]
+  agentKeys     AgentKey[]
+  accounts      Account[]
+  sessions      Session[]
+
+  @@index([walletAddress])
+  @@index([createdAt])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Wallet {
+  id             String   @id @default(cuid())
+  address        String
+  chain          String   @default("polygon")
+  label          String?
+  isPrimary      Boolean  @default(false)
+  lastSyncedAt   DateTime?
+  signatureCount Int      @default(0)
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions   CachedTransaction[]
+  createdAt      DateTime @default(now())
+
+  @@unique([address, chain])
+  @@index([userId])
+  @@index([address])
+}
+
+model CachedTransaction {
+  id          String   @id @default(cuid())
+  signature   String
+  walletId    String
+  wallet      Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  blockTime   Int
+  type        String
+  tokenIn     String?
+  tokenOut    String?
+  amountIn    Decimal?
+  amountOut   Decimal?
+  priceUsd    Decimal?
+  rawData     Json
+  processedAt DateTime @default(now())
+
+  @@unique([walletId, signature])
+  @@index([walletId, blockTime])
+  @@index([signature])
+}
+
+model TraderScore {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roi              Decimal  @default(0)
+  winRate          Decimal  @default(0)
+  maxDrawdown      Decimal  @default(0)
+  profitFactor     Decimal  @default(0)
+  sharpeRatio      Decimal  @default(0)
+  consistency      Decimal  @default(0)
+  activityScore    Decimal  @default(0)
+  riskLevel        String   @default("MEDIUM")
+  trustScore       Decimal  @default(0)
+  totalTrades      Int      @default(0)
+  winningTrades    Int      @default(0)
+  losingTrades     Int      @default(0)
+  avgHoldTimeSecs  Int      @default(0)
+  chainBreakdown   Json?
+  lastCalculatedAt DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  @@unique([userId])
+  @@index([trustScore])
+  @@index([lastCalculatedAt])
+}
+
+model Prediction {
+  id               String    @id @default(cuid())
+  authorId         String
+  author           User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  groupId          String?
+  group            Group?    @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  encryptedPayload String
+  nonce            String
+  visibility       String
+  contentHash      String    @unique
+  solanaTxSig      String?   @unique
+  onChainStatus    String    @default("pending")
+  expiresAt        DateTime?
+  outcome          String?   @default("PENDING")
+  verifiedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([authorId, createdAt])
+  @@index([groupId, createdAt])
+  @@index([contentHash])
+  @@index([outcome])
+}
+
+model Group {
+  id                     String   @id @default(cuid())
+  ownerId                String
+  owner                  User     @relation("GroupOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  name                   String
+  description            String?
+  categorySlug           String   @default("crypto")
+  subcategorySlug        String?
+  matrixRoomId           String?  @unique
+  isPublic               Boolean  @default(false)
+  monthlyPriceUsd        Decimal  @default(0)
+  yearlyPriceUsd         Decimal?
+  lifetimePriceUsd       Decimal?
+  subscriberCount        Int      @default(0)
+  avgRating              Decimal  @default(0)
+  reviewCount            Int      @default(0)
+  encryptionKeyEncrypted String?
+  serviceTypes           String[] @default([])
+  allowPublicComments    Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  predictions   Prediction[]
+  members       GroupMember[]
+  subscriptions Subscription[]
+  reviews       GroupReview[]
+  comments      GroupComment[]
+
+  @@index([ownerId])
+  @@index([categorySlug])
+  @@index([avgRating])
+}
+
+model GroupMember {
+  id       String   @id @default(cuid())
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  groupId  String
+  group    Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  role     String   @default("member")
+  joinedAt DateTime @default(now())
+
+  @@unique([userId, groupId])
+  @@index([groupId])
+}
+
+model Subscription {
+  id                String       @id @default(cuid())
+  userId            String
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  groupId           String
+  group             Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  paymentTxSig      String       @unique
+  paymentChain      String       @default("polygon")
+  paymentReference  String
+  amountUsd         Decimal
+  platformFeeUsd    Decimal
+  expertNetUsd      Decimal
+  platformFeeBps    Int          @default(500)
+  expertPayoutStatus String      @default("pending")
+  expertPayoutTxSig String?
+  startsAt          DateTime     @default(now())
+  expiresAt         DateTime?
+  status            String       @default("active")
+  createdAt         DateTime     @default(now())
+  review            GroupReview?
+
+  @@index([userId])
+  @@index([groupId])
+  @@index([expiresAt])
+  @@index([status])
+  @@index([expertPayoutStatus])
+  @@index([paymentReference])
+}
+
+model ExpertPayout {
+  id          String   @id @default(cuid())
+  expertId    String
+  expert      User     @relation(fields: [expertId], references: [id], onDelete: Cascade)
+  amountUsd   Decimal
+  txSig       String?
+  chain       String   @default("polygon")
+  status      String   @default("pending")
+  note        String?
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+
+  @@index([expertId])
+  @@index([status])
+}
+
+model PlatformSettings {
+  id                    String   @id @default("default")
+  platformFeeBps        Int      @default(500)
+  platformWalletPolygon String?
+  platformWalletSolana  String?
+  updatedAt             DateTime @updatedAt
+}
+
+model AdminAuditLog {
+  id        String   @id @default(cuid())
+  adminId   String
+  action    String
+  target    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([adminId])
+  @@index([createdAt])
+}
+
+/// Verified subscriber reviews only (paid + active/expired after paid period)
+/// Public discussion on groups (public groups: any signed-in user; private: members only)
+model GroupComment {
+  id        String   @id @default(cuid())
+  groupId   String
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  body      String   @db.VarChar(2000)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([groupId, createdAt])
+  @@index([userId])
+}
+
+/// Bots experts sell, rent, or teach (marketplace listing)
+model ExpertBot {
+  id           String   @id @default(cuid())
+  expertId     String
+  expert       User     @relation(fields: [expertId], references: [id], onDelete: Cascade)
+  name         String
+  description  String?  @db.Text
+  pricingModel String   @default("sell")
+  priceUsd     Decimal?
+  categorySlug String   @default("crypto")
+  platform     String?
+  isPublic     Boolean  @default(true)
+  externalUrl  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([expertId])
+  @@index([isPublic])
+  @@index([categorySlug])
+}
+
+model GroupReview {
+  id             String       @id @default(cuid())
+  groupId        String
+  group          Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId String       @unique
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  rating         Int
+  comment        String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([userId, groupId])
+  @@index([groupId])
+  @@index([rating])
+}
+
+model AgentKey {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  keyHash     String    @unique
+  keyPrefix   String    @default("")
+  name        String
+  permissions String[]  @default(["read:subscriptions", "read:signals", "read:groups"])
+  isActive    Boolean   @default(true)
+  lastUsedAt  DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([keyHash])
+  @@index([keyPrefix])
+}

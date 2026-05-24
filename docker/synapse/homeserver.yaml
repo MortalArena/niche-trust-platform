@@ -1,0 +1,32 @@
+server_name: "localhost"
+pid_file: /data/homeserver.pid
+public_baseurl: "http://localhost:8008/"
+web_client_location: "http://localhost:8080/"
+
+listeners:
+  - port: 8008
+    tls: false
+    type: http
+    x_forwarded: true
+    bind_addresses: ['0.0.0.0']
+    resources:
+      - names: [client, federation]
+        compress: false
+
+database:
+  name: sqlite3
+  args:
+    database: /data/homeserver.db
+
+media_store_path: /data/media_store
+uploads_path: /data/uploads
+max_upload_size: 50M
+
+enable_registration: true
+enable_registration_without_verification: true
+registration_shared_secret: "niche_dev_matrix_secret_change_in_prod"
+
+suppress_key_server_warning: true
+
+# Dev only — do not use in production
+report_stats: false
