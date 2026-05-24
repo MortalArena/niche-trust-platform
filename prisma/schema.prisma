@@ -153,22 +153,56 @@ model Prediction {
   author           User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
   groupId          String?
   group            Group?    @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  // 📝 Prediction details (human-readable, what the seller "sells")
+  title            String    // e.g. "BTC will reach 72k by Dec 31"
+  description      String?   @db.Text // optional longer description
+  category         String    @default("price_action") // price_action | binary | multiple_choice | numerical | polymarket | kalshi | stock | manual
+
+  // 💰 For price_action / stock / numerical predictions  
+  asset            String?   // BTC, ETH, SOL, AAPL, SPY, GOLD
+  entryPrice       Decimal?
+  targetPrice      Decimal?
+  stopLoss         Decimal?
+  timeframe        String?   // 1h, 4h, 1d, 1w, 1m, 3m
+
+  // 🔀 For binary / multiple_choice predictions
+  question         String?   // "Will BTC reach 100k before 2026?"
+  predictedOutcome String?   // The option/side predicted (e.g. "Yes", "Trump", "Above $200")
+
+  // 🔗 External platform linking (Polymarket, Kalshi, etc.)
+  externalUrl      String?   // Full URL to the Polymarket/Kalshi market
+  externalMarketId String?   // Condition ID or slug on external platform
+  predictionSource String    @default("internal") // internal | polymarket | kalshi
+
+  // 🔐 E2EE & On-Chain proof
   encryptedPayload String
   nonce            String
-  visibility       String
   contentHash      String    @unique
   solanaTxSig      String?   @unique
   onChainStatus    String    @default("pending")
+
+  // 📊 Resolution
   expiresAt        DateTime?
-  outcome          String?   @default("PENDING")
-  verifiedAt       DateTime?
+  outcome          String?   @default("PENDING") // PENDING | WIN | LOSS | VOID
+  resolvedPrice    Decimal?  // Price at resolution time (for verification)
+  resolvedAt       DateTime?
+  
+  // 🏆 Auto-verification tracking
+  verificationAttempts Int    @default(0)
+  lastVerificationError String?
+  verifiedAt        DateTime?
+  
+  visibility       String    @default("group") // public | group | private
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
   @@index([authorId, createdAt])
   @@index([groupId, createdAt])
-  @@index([contentHash])
   @@index([outcome])
+  @@index([expiresAt])
+  @@index([contentHash])
+  @@index([externalMarketId])
 }
 
 model Group {
