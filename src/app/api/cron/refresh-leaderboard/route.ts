@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncPolymarketTrader } from '@/lib/polymarket/leaderboard';
-import { discoverAndImport } from '@/lib/polymarket/discovery';
+import { discoverAndImportAll } from '@/lib/polymarket/discovery';
 import { prisma } from '@/lib/db';
 import { logger } from '@/lib/logger';
 
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   try {
     // ── Phase 1: Discover new traders ──
     logger.info('Phase 1: Discovering new traders');
-    const discovery = await discoverAndImport();
+    const discovery = await discoverAndImportAll();
     phases.discovery = discovery;
 
     // ── Phase 2: Sync unsynced traders ──

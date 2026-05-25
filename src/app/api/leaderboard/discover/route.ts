@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { discoverAndImport } from '@/lib/polymarket/discovery';
+import { discoverAndImportAll } from '@/lib/polymarket/discovery';
 import { auth } from '@/auth';
 import { logger } from '@/lib/logger';
 
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const categorySlug: string | undefined = body.category ?? undefined;
 
-    const result = await discoverAndImport(categorySlug);
+    const result = await discoverAndImportAll(categorySlug);
 
     logger.info(
       { discovered: result.discovered, imported: result.imported },

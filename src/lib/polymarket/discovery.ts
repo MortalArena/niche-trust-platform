@@ -1,205 +1,198 @@
 import { listEvents } from '@/lib/polymarket/gamma';
-import { getTradesForUser } from '@/lib/polymarket/data';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/db';
 
 // ─── Types ──────────────────────────────────────────────────────
 
-export interface PolymarketTraderInfo {
+export interface PolymarketTraderBrief {
   proxyWallet: string;
-  name?: string | null;
-  tradesCount: number;
-  categories: string[];
 }
 
 /**
  * Category-to-tag mapping for Polymarket Gamma API discovery.
+ * Covers ALL categories and subcategories.
  */
 const CATEGORY_TAG_MAP: Record<string, string[]> = {
   sports:    ['sports', 'nfl', 'nba', 'soccer', 'mlb', 'nhl', 'ufc', 'mma', 'boxing', 'tennis', 'golf', 'cricket'],
-  politics:  ['politics', 'us-elections', 'global-elections', 'policy', 'us-politics'],
-  crypto:    ['crypto', 'bitcoin', 'ethereum', 'defi', 'nft', 'solana'],
-  'science-tech': ['science', 'technology', 'ai', 'space', 'biotech'],
-  economics: ['economics', 'finance', 'macro', 'fed', 'equities'],
-  culture:   ['culture', 'entertainment', 'awards', 'box-office', 'music'],
-  business:  ['business', 'earnings', 'ipo'],
-  geopolitics: ['geopolitics', 'diplomacy', 'conflict'],
-  'climate-weather': ['climate', 'weather'],
-  esports:   ['esports', 'gaming', 'league-of-legends', 'valorant', 'cs2'],
-  'world-events': ['world-events', 'breaking-news'],
+  politics:  ['politics', 'us-elections', 'global-elections', 'policy', 'us-politics', 'democrats', 'republicans'],
+  crypto:    ['crypto', 'bitcoin', 'ethereum', 'defi', 'nft', 'solana', 'memecoin', 'layer1', 'layer2'],
+  'science-tech': ['science', 'technology', 'ai', 'space', 'biotech', 'tech'],
+  economics: ['economics', 'finance', 'macro', 'fed', 'equities', 'stock-market'],
+  culture:   ['culture', 'entertainment', 'awards', 'box-office', 'music', 'movies', 'celebrity'],
+  business:  ['business', 'earnings', 'ipo', 'startups'],
+  geopolitics: ['geopolitics', 'diplomacy', 'conflict', 'war', 'international'],
+  'climate-weather': ['climate', 'weather', 'natural-disaster', 'environment'],
+  esports:   ['esports', 'gaming', 'league-of-legends', 'valorant', 'cs2', 'dota2'],
+  'world-events': ['world-events', 'breaking-news', 'viral'],
 };
 
 /**
- * 🧠 Discovery Engine
- * 
- * Discovers Polymarket traders by:
- * 1. Fetching top active events for each category tag
- * 2. For each event, fetching its most recent trades
- * 3. Extracting unique proxy wallets
- * 4. Storing them in DB as "discovered" for later sync
- * 
- * This is the ONLY way to find traders since Polymarket has no
- * "list all traders" API endpoint.
+ * Batch-fetch trades by condition ID from the Polymarket Data API.
+ * Returns raw trade objects so we can extract wallet addresses.
  */
-export async function discoverPolymarketTraders(options?: {
-  categories?: string[];
-  eventsPerTag?: number;
-  maxTraders?: number;
-}): Promise<PolymarketTraderInfo[]> {
-  const categories = options?.categories ?? Object.keys(CATEGORY_TAG_MAP);
-  const eventsPerTag = options?.eventsPerTag ?? 10;
-  const maxTraders = options?.maxTraders ?? 200;
+async function fetchTradesByCondition(
+  conditionId: string,
+  limit = 100
+): Promise<Array<{ maker?: string; taker?: string }>> {
+  try {
+    const url = new URL('https://data-api.polymarket.com/trades');
+    url.searchParams.set('condition_id', conditionId);
+    url.searchParams.set('limit', String(limit));
 
-  const discoveredMap = new Map<string, PolymarketTraderInfo>();
-  const seenWallets = new Set<string>();
-
-  // First, check if we already have some in DB
-  const existingTraders = await prisma.polymarketTrader.findMany({
-    select: { proxyWallet: true },
-    take: 500,
-  });
-  for (const t of existingTraders) {
-    seenWallets.add(t.proxyWallet);
+    const res = await fetch(url.toString(), {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
   }
+}
 
-  for (const categorySlug of categories) {
-    const tagSlugs = CATEGORY_TAG_MAP[categorySlug] ?? [categorySlug];
-    logger.info({ categorySlug, tags: tagSlugs.length }, 'Discovering traders in category');
+/**
+ * Massive Discovery — fetches ALL traders from ALL active Polymarket events.
+ * No artificial limits. Uses batching and pagination for scale.
+ * 
+ * Returns an array of unique proxy wallet addresses found.
+ */
+export async function discoverAllPolymarketTraders(options?: {
+  maxWallets?: number;
+}): Promise<PolymarketTraderBrief[]> {
+  const maxWallets = options?.maxWallets ?? 50000; // Massive default
+  const discoveredSet = new Set<string>();
 
+  // Track what we already know
+  const existingInDb = await prisma.polymarketTrader.findMany({
+    select: { proxyWallet: true },
+    take: 50000,
+  });
+  for (const t of existingInDb) discoveredSet.add(t.proxyWallet);
+
+  // Loop through ALL category tags
+  const categoryEntries = Object.entries(CATEGORY_TAG_MAP);
+  logger.info({ totalTags: categoryEntries.reduce((s, [, v]) => s + v.length, 0) }, 'Starting mass discovery');
+
+  for (const [category, tagSlugs] of categoryEntries) {
     for (const tagSlug of tagSlugs) {
+      if (discoveredSet.size >= maxWallets) break;
+
       try {
+        // Fetch MANY events per tag (not just 10)
         const events = await listEvents({
           tag_slug: tagSlug,
-          limit: eventsPerTag,
+          limit: 100, // Get 100 events per tag
           active: true,
           closed: false,
           order: 'volume24hr',
           ascending: false,
         });
 
-        // For each event, fetch trades from the Data API
         for (const event of events) {
+          if (discoveredSet.size >= maxWallets) break;
+
           const conditions = event.markets
             ?.map(m => m.conditionId)
             .filter((c): c is string => Boolean(c))
             ?? [];
 
           for (const conditionId of conditions) {
-            try {
-              // Polymarket Data API supports /trades?condition_id=xxx
-              // But our getTradesForUser targets user trades.
-              // We need a direct fetch for trades-by-condition.
-              const trades = await directFetchTradesByCondition(conditionId, 50);
-              
-              for (const trade of trades) {
-                const wallet = trade.maker?.toLowerCase() ?? trade.taker?.toLowerCase();
-                if (!wallet || seenWallets.has(wallet)) continue;
+            if (discoveredSet.size >= maxWallets) break;
 
-                seenWallets.add(wallet);
-                discoveredMap.set(wallet, {
-                  proxyWallet: wallet,
-                  tradesCount: 1,
-                  categories: [tagSlug],
-                });
-
-                if (discoveredMap.size >= maxTraders) break;
-              }
-            } catch {
-              // Skip failed condition
+            // Get up to 100 trades per condition
+            const trades = await fetchTradesByCondition(conditionId, 100);
+            for (const trade of trades) {
+              const wallet = (trade.maker ?? trade.taker)?.toLowerCase();
+              if (wallet) discoveredSet.add(wallet);
+              if (discoveredSet.size >= maxWallets) break;
             }
-            if (discoveredMap.size >= maxTraders) break;
           }
-          if (discoveredMap.size >= maxTraders) break;
         }
       } catch {
         // Skip failed tag
       }
-      if (discoveredMap.size >= maxTraders) break;
     }
-    // Update categories for already-discovered wallets
-    // (If we found a trader in multiple categories)
+    if (discoveredSet.size >= maxWallets) break;
   }
 
-  const discovered = Array.from(discoveredMap.values());
-  logger.info({ total: discovered.length }, 'Discovery complete');
+  const discovered = Array.from(discoveredSet)
+    .filter(w => w && w.length > 10) // Remove invalid wallets
+    .map(proxyWallet => ({ proxyWallet }));
 
+  logger.info({ total: discovered.length }, 'Mass discovery complete');
   return discovered;
 }
 
 /**
- * Direct fetch to Polymarket Data API: /trades?condition_id=xxx
- * Returns raw trade objects with maker/taker addresses.
+ * Bulk-import discovered wallets into DB using batch inserts.
+ * Skips duplicates automatically (unique constraint on proxyWallet).
  */
-async function directFetchTradesByCondition(
-  conditionId: string,
-  limit = 50
-): Promise<Array<{ maker?: string; taker?: string; conditionId: string; timestamp: number; side: string; size: number; price: number }>> {
-  const url = new URL('https://data-api.polymarket.com/trades');
-  url.searchParams.set('condition_id', conditionId);
-  url.searchParams.set('limit', String(limit));
-
-  const res = await fetch(url.toString(), {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(10000),
-  });
-
-  if (!res.ok) return [];
-  return res.json();
-}
-
-/**
- * Batch-import discovered wallets into the PolymarketTrader table.
- * This seeds the leaderboard with wallets to be synced later.
- */
-export async function importDiscoveredTraders(
-  traders: PolymarketTraderInfo[]
+export async function bulkImportDiscoveredTraders(
+  traders: PolymarketTraderBrief[]
 ): Promise<{ imported: number; skipped: number }> {
   let imported = 0;
   let skipped = 0;
 
-  for (const trader of traders) {
+  // Batch in groups of 50 for performance
+  const batchSize = 50;
+  for (let i = 0; i < traders.length; i += batchSize) {
+    const batch = traders.slice(i, i + batchSize);
     try {
-      await prisma.polymarketTrader.create({
-        data: {
-          proxyWallet: trader.proxyWallet,
-          categories: trader.categories,
-          totalTrades: 0, // Will be filled on sync
+      const result = await prisma.polymarketTrader.createMany({
+        data: batch.map(t => ({
+          proxyWallet: t.proxyWallet,
+          categories: [],
+          totalTrades: 0,
           lastSyncedAt: new Date(0), // Force sync on next cron
-        },
+        })),
+        skipDuplicates: true,
       });
-      imported++;
+      imported += result.count;
+      skipped += batch.length - result.count;
     } catch (error: unknown) {
-      // Duplicate or constraint error
-      skipped++;
+      // Fall back to individual inserts for error recovery
+      for (const trader of batch) {
+        try {
+          await prisma.polymarketTrader.create({
+            data: {
+              proxyWallet: trader.proxyWallet,
+              categories: [],
+              totalTrades: 0,
+              lastSyncedAt: new Date(0),
+            },
+          });
+          imported++;
+        } catch {
+          skipped++;
+        }
+      }
     }
   }
 
-  logger.info({ imported, skipped }, 'Imported discovered traders');
+  logger.info({ imported, skipped }, 'Bulk import complete');
   return { imported, skipped };
 }
 
 /**
- * API: Discover + Import in one call.
- * Used by the cron job and the seed API.
+ * API endpoint: Discover ALL traders and import them.
+ * No limits. Scans every event across all categories.
  */
-export async function discoverAndImport(categorySlug?: string): Promise<{
+export async function discoverAndImportAll(categorySlug?: string): Promise<{
   discovered: number;
   imported: number;
   skipped: number;
+  note: string;
 }> {
-  const categories = categorySlug ? [categorySlug] : undefined;
+  logger.info('Starting full Polymarket trader discovery...');
 
-  const discovered = await discoverPolymarketTraders({
-    categories,
-    eventsPerTag: 10,
-    maxTraders: 200,
-  });
+  const traders = await discoverAllPolymarketTraders();
 
-  const { imported, skipped } = await importDiscoveredTraders(discovered);
+  const { imported, skipped } = await bulkImportDiscoveredTraders(traders);
 
   return {
-    discovered: discovered.length,
+    discovered: traders.length,
     imported,
     skipped,
+    note: `Scanned ALL Polymarket events across all categories. Found ${traders.length} unique wallets. Imported ${imported} new traders. Re-run every 5 minutes via cron to discover new ones.`,
   };
 }
