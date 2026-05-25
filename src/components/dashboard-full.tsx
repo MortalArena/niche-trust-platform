@@ -41,6 +41,7 @@ interface DashboardData {
 interface DashboardFullProps {
   initial: DashboardData;
   userId: string;
+  userRole?: string;
 }
 
 /* ─────────── Styles ─────────── */
@@ -51,8 +52,9 @@ const btnSecondary = 'rounded-lg border-2 border-[var(--border)] bg-[var(--surfa
 const btnDanger = 'rounded-lg border-2 border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 dark:bg-red-950 dark:text-red-300';
 
 /* ─────────── Main Component ─────────── */
-export function DashboardFull({ initial, userId }: DashboardFullProps) {
-  const [tab, setTab] = useState<'overview' | 'customer' | 'expert'>('overview');
+export function DashboardFull({ initial, userId, userRole }: DashboardFullProps) {
+  const defaultTab = userRole === 'expert' ? 'expert' : userRole === 'subscriber' ? 'customer' : 'overview';
+  const [tab, setTab] = useState<'overview' | 'customer' | 'expert'>(defaultTab as 'overview' | 'customer' | 'expert');
   const [data, setData] = useState<DashboardData>(initial);
   const [loading, setLoading] = useState(false);
 

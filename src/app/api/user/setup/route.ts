@@ -6,6 +6,7 @@ import { z } from 'zod';
 const setupSchema = z.object({
   isAnonymous: z.boolean(),
   displayName: z.string().max(30).optional(),
+  role: z.enum(['expert', 'subscriber']),
 });
 
 export async function POST(req: Request) {
@@ -20,8 +21,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid data' }, { status: 400 });
   }
 
-  const { isAnonymous, displayName } = parsed.data;
-  const updateData: Record<string, unknown> = { isAnonymous, isSetupComplete: true };
+  const { isAnonymous, displayName, role } = parsed.data;
+  const updateData: Record<string, unknown> = { isAnonymous, isSetupComplete: true, role };
   if (displayName?.trim()) {
     updateData.displayName = displayName.trim();
   }

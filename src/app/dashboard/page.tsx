@@ -14,7 +14,7 @@ export default async function DashboardPage() {
 
   // Fetch all data directly from Prisma (no fetch loop needed)
   const [user, score, activeSubs, ownedGroups, predictions, expertPayouts] = await Promise.all([
-    prisma.user.findUnique({ where: { id: userId }, select: { walletAddress: true, expertBalanceUsd: true } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { walletAddress: true, expertBalanceUsd: true, role: true } }),
     prisma.traderScore.findUnique({ where: { userId } }),
     prisma.subscription.findMany({ where: { userId, status: 'active', OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] }, include: { group: { select: { id: true, name: true } } } }),
     prisma.group.findMany({ where: { ownerId: userId }, select: { id: true, name: true, subscriberCount: true, isPublic: true } }),
@@ -79,7 +79,7 @@ export default async function DashboardPage() {
         <p className="mb-6 text-sm text-[var(--text-secondary)]">
           Full toolkit for buyers & sellers — trust scores, earnings, predictions, and more.
         </p>
-        <DashboardFull initial={initial} userId={userId} />
+        <DashboardFull initial={initial} userId={userId} userRole={user?.role ?? 'user'} />
       </div>
     </PageShell>
   );
