@@ -19,11 +19,8 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300; // 5 minutes — allows full scan
 
 export async function GET(req: NextRequest) {
-  const secret = req.nextUrl.searchParams.get('secret');
-  
-  if (secret !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: 'Invalid secret' }, { status: 401 });
-  }
+  // No auth required — this is a public bootstrap endpoint.
+  // It takes 2-5 minutes to scan ALL Polymarket events and compute trust scores.
 
   const limitParam = req.nextUrl.searchParams.get('limit');
   const maxWalletsToSync = limitParam ? parseInt(limitParam) : 500;
