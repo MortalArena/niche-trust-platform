@@ -35,8 +35,11 @@ const SEED_TRADERS: { wallet: string; name: string; category: string }[] = [
  */
 export async function POST(req: NextRequest) {
   try {
+    // Allow seed with API key header (for cron/bootstrap) OR authenticated session
+    const apiKey = req.headers.get('x-api-key');
     const session = await auth();
-    if (!session?.user?.id) {
+    
+    if (!session?.user?.id && apiKey !== process.env.CRON_SECRET) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
