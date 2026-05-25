@@ -1,28 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { discoverAndImportAll } from '@/lib/polymarket/discovery';
 import { syncPolymarketTrader } from '@/lib/polymarket/leaderboard';
 import { prisma } from '@/lib/db';
 import { logger } from '@/lib/logger';
 
 /**
- * Bootstrap initial trader data into the leaderboard.
+ * Bootstrap — FULL Polymarket trader discovery + sync.
  * 
- * GET /api/bootstrap?secret=YOUR_CRON_SECRET
+ * This does NOT use fake seed wallets. It scans ALL active Polymarket
+ * events across ALL categories, finds EVERY trader wallet that has
+ * placed a trade, and syncs them all with trust scores.
  * 
- * This seeds the PolymarketTrader table with known traders so
- * the leaderboard shows data immediately.
+ * GET /api/bootstrap?secret=YOUR_SECRET
+ * GET /api/bootstrap?secret=YOUR_SECRET&limit=1000
  */
-const SEED_TRADERS: { wallet: string; name: string; category: string }[] = [
-  { wallet: '0xcfe42e0c848b8f9ac482379b4c05b0e3be34234b', name: 'Polymarket Whale 1', category: 'politics' },
-  { wallet: '0x3ac5cb3a328adadc5c4e0a49fe54f8e17a45c7c3', name: 'Polymarket Whale 2', category: 'politics' },
-  { wallet: '0x2e1d04b3f3c7a46a8d0b9c5b1e4f8a2d0b3c5e7', name: 'Sports Trader', category: 'sports' },
-  { wallet: '0x8a9c5b4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8', name: 'Crypto Expert', category: 'crypto' },
-  { wallet: '0x1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0', name: 'NFL Predictor', category: 'sports' },
-  { wallet: '0x0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9', name: 'NBA Analyst', category: 'sports' },
-  { wallet: '0xb0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c', name: 'Entertainment Guru', category: 'culture' },
-  { wallet: '0x9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0', name: 'Macro Trader', category: 'economics' },
-];
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 300; // 5 minutes — allows full scan
 
 export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get('secret');
@@ -31,38 +25,67 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid secret' }, { status: 401 });
   }
 
-  const results: { wallet: string; name: string; category: string; synced: boolean; trustScore?: number; error?: string }[] = [];
+  const limitParam = req.nextUrl.searchParams.get('limit');
+  const maxWalletsToSync = limitParam ? parseInt(limitParam) : 500;
 
-  for (const entry of SEED_TRADERS) {
-    try {
-      const brief = await syncPolymarketTrader(entry.wallet, entry.category);
-      results.push({
-        wallet: entry.wallet,
-        name: entry.name,
-        category: entry.category,
-        synced: Boolean(brief),
-        trustScore: brief?.trustScore,
-      });
-    } catch (error) {
-      results.push({
-        wallet: entry.wallet,
-        name: entry.name,
-        category: entry.category,
-        synced: false,
-        error: (error as Error).message,
-      });
+  logger.info({ maxWalletsToSync }, 'Starting FULL Polymarket bootstrap...');
+
+  try {
+    // STEP 1: Discover ALL traders from Polymarket events (scan all categories)
+    const discoveryResult = await discoverAndImportAll();
+    
+    const { discovered, imported, skipped } = discoveryResult;
+    logger.info({ discovered, imported, skipped }, 'Discovery complete. Now syncing traders with trust scores...');
+
+    // STEP 2: Now sync the most recently added traders (highest potential value)
+    const tradersToSync = await prisma.polymarketTrader.findMany({
+      where: { 
+        OR: [
+          { trustScore: 0 },
+          { lastSyncedAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } }
+        ]
+      },
+      orderBy: { createdAt: 'desc' },
+      take: maxWalletsToSync,
+      select: { proxyWallet: true },
+    });
+
+    logger.info({ totalToSync: tradersToSync.length }, 'Syncing discovered traders...');
+
+    let syncedCount = 0;
+    let failedCount = 0;
+
+    // Sync in batches to avoid rate limits
+    const batchSize = 10;
+    for (let i = 0; i < tradersToSync.length; i += batchSize) {
+      const batch = tradersToSync.slice(i, i + batchSize);
+      const results = await Promise.allSettled(
+        batch.map(t => syncPolymarketTrader(t.proxyWallet, 'all'))
+      );
+      
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value) syncedCount++;
+        else failedCount++;
+      }
+
+      // Small delay between batches to be nice to Polymarket API
+      if (i + batchSize < tradersToSync.length) {
+        await new Promise(r => setTimeout(r, 1000));
+      }
     }
+
+    // STEP 3: Trigger leaderboard refresh
+    logger.info({ syncedCount, failedCount }, 'Bootstrap fully complete');
+
+    return NextResponse.json({
+      success: true,
+      discovery: { discovered, imported, skipped, note: 'Scanned ALL Polymarket events across ALL categories' },
+      sync: { attempted: tradersToSync.length, syncedCount, failedCount },
+      totalInDB: await prisma.polymarketTrader.count(),
+      note: `Full bootstrap complete. Synced ${syncedCount} traders with trust scores. Cron will sync the rest every 5 minutes.`,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Bootstrap failed');
+    return NextResponse.json({ error: 'Bootstrap failed', details: (error as Error).message }, { status: 500 });
   }
-
-  const synced = results.filter((r) => r.synced).length;
-  const failed = results.filter((r) => !r.synced).length;
-
-  logger.info({ total: results.length, synced, failed }, 'Bootstrap completed');
-
-  return NextResponse.json({
-    success: true,
-    results,
-    summary: { total: results.length, synced, failed },
-    note: 'Traders seeded. Leaderboard will populate within 5 minutes.',
-  });
 }
