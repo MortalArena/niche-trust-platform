@@ -388,3 +388,39 @@ model AgentKey {
   @@index([keyHash])
   @@index([keyPrefix])
 }
+
+/// 🏆 Polymarket Trader Leaderboard Cache
+/// Stores synced trader data from Polymarket with computed trust scores.
+/// Updated every 5 minutes by cron job.
+model PolymarketTrader {
+  id             String   @id @default(cuid())
+  proxyWallet    String   @unique
+  displayName    String?
+  pseudonym      String?
+  verifiedBadge  Boolean  @default(false)
+  xUsername      String?
+  
+  // 📊 Computed trust metrics
+  trustScore     Decimal  @default(0)
+  winRate        Decimal  @default(0)
+  roi            Decimal  @default(0)
+  maxDrawdown    Decimal  @default(0)
+  consistency    Decimal  @default(0)
+  profitFactor   Decimal  @default(0)
+  riskLevel      String   @default("MEDIUM")
+  
+  // 📈 Stats
+  totalTrades    Int      @default(0)
+  activityDays   Int      @default(0)
+  
+  // 🏷️ Categories this trader is active in
+  categories     String[] @default([])
+  
+  // ⏰ Sync tracking
+  lastSyncedAt   DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  @@index([trustScore])
+  @@index([categories])
+  @@index([lastSyncedAt])
+}
