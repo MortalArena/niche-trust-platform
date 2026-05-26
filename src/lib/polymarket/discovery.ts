@@ -1,6 +1,8 @@
 import { listEvents } from '@/lib/polymarket/gamma';
+import { dataFetch } from '@/lib/polymarket/client';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/db';
+import type { PolymarketTrade } from '@/lib/polymarket/types';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -27,24 +29,49 @@ const CATEGORY_TAG_MAP: Record<string, string[]> = {
 };
 
 /**
- * Batch-fetch trades by condition ID from the Polymarket Data API.
- * Returns raw trade objects so we can extract wallet addresses.
+ * Fast path: paginate global recent trades (seconds to thousands of wallets).
+ * Polymarket Data API uses `market` (condition id) and returns `proxyWallet`.
  */
-async function fetchTradesByCondition(
-  conditionId: string,
-  limit = 100
-): Promise<Array<{ maker?: string; taker?: string }>> {
-  try {
-    const url = new URL('https://data-api.polymarket.com/trades');
-    url.searchParams.set('condition_id', conditionId);
-    url.searchParams.set('limit', String(limit));
+export async function discoverFromRecentTrades(options?: {
+  maxWallets?: number;
+  pageSize?: number;
+  maxPages?: number;
+}): Promise<PolymarketTraderBrief[]> {
+  const maxWallets = options?.maxWallets ?? 3000;
+  const pageSize = Math.min(options?.pageSize ?? 100, 100);
+  const maxPages = options?.maxPages ?? 40;
+  const wallets = new Set<string>();
 
-    const res = await fetch(url.toString(), {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(8000),
+  for (let page = 0; page < maxPages && wallets.size < maxWallets; page++) {
+    try {
+      const trades = await dataFetch<PolymarketTrade[]>(`/trades`, {
+        limit: pageSize,
+        offset: page * pageSize,
+        takerOnly: false,
+      });
+      if (!trades.length) break;
+      for (const t of trades) {
+        const w = t.proxyWallet?.toLowerCase();
+        if (w && w.length === 42 && w.startsWith('0x')) wallets.add(w);
+        if (wallets.size >= maxWallets) break;
+      }
+      if (trades.length < pageSize) break;
+    } catch (error) {
+      logger.warn({ page, error }, 'Recent trades discovery page failed');
+      break;
+    }
+  }
+
+  return Array.from(wallets).map((proxyWallet) => ({ proxyWallet }));
+}
+
+async function fetchTradesByCondition(conditionId: string, limit = 100): Promise<PolymarketTrade[]> {
+  try {
+    return await dataFetch<PolymarketTrade[]>(`/trades`, {
+      market: conditionId,
+      limit,
+      takerOnly: false,
     });
-    if (!res.ok) return [];
-    return res.json();
   } catch {
     return [];
   }
@@ -59,17 +86,25 @@ async function fetchTradesByCondition(
 export async function discoverAllPolymarketTraders(options?: {
   maxWallets?: number;
   maxEventsPerTag?: number;
+  skipRecentTrades?: boolean;
 }): Promise<PolymarketTraderBrief[]> {
   const maxWallets = options?.maxWallets ?? 50000;
   const maxEventsPerTag = options?.maxEventsPerTag ?? 100;
   const discoveredSet = new Set<string>();
 
-  // Track what we already know
   const existingInDb = await prisma.polymarketTrader.findMany({
     select: { proxyWallet: true },
     take: 50000,
   });
   for (const t of existingInDb) discoveredSet.add(t.proxyWallet);
+
+  if (!options?.skipRecentTrades) {
+    const recent = await discoverFromRecentTrades({
+      maxWallets: Math.min(maxWallets, 5000),
+    });
+    for (const { proxyWallet } of recent) discoveredSet.add(proxyWallet);
+    logger.info({ fromRecentTrades: recent.length, total: discoveredSet.size }, 'Recent trades discovery');
+  }
 
   // Loop through ALL category tags
   const categoryEntries = Object.entries(CATEGORY_TAG_MAP);
@@ -104,8 +139,8 @@ export async function discoverAllPolymarketTraders(options?: {
             // Get up to 100 trades per condition
             const trades = await fetchTradesByCondition(conditionId, 100);
             for (const trade of trades) {
-              const wallet = (trade.maker ?? trade.taker)?.toLowerCase();
-              if (wallet) discoveredSet.add(wallet);
+              const wallet = trade.proxyWallet?.toLowerCase();
+              if (wallet && wallet.length === 42) discoveredSet.add(wallet);
               if (discoveredSet.size >= maxWallets) break;
             }
           }
@@ -179,13 +214,30 @@ export async function bulkImportDiscoveredTraders(
  * API endpoint: Discover ALL traders and import them.
  * No limits. Scans every event across all categories.
  */
+/** Fast discovery: recent global trades only (~30s). Use for populate / first load. */
+export async function discoverAndImportFast(maxWallets = 2500): Promise<{
+  discovered: number;
+  imported: number;
+  skipped: number;
+  note: string;
+}> {
+  const traders = await discoverFromRecentTrades({ maxWallets, maxPages: 30 });
+  const { imported, skipped } = await bulkImportDiscoveredTraders(traders);
+  return {
+    discovered: traders.length,
+    imported,
+    skipped,
+    note: `Imported ${imported} wallets from recent Polymarket trades. Cron will deep-scan events and sync scores.`,
+  };
+}
+
 export async function discoverAndImportAll(categorySlug?: string): Promise<{
   discovered: number;
   imported: number;
   skipped: number;
   note: string;
 }> {
-  logger.info('Starting full Polymarket trader discovery...');
+  logger.info({ categorySlug }, 'Starting full Polymarket trader discovery...');
 
   const traders = await discoverAllPolymarketTraders();
 
@@ -195,6 +247,6 @@ export async function discoverAndImportAll(categorySlug?: string): Promise<{
     discovered: traders.length,
     imported,
     skipped,
-    note: `Scanned ALL Polymarket events across all categories. Found ${traders.length} unique wallets. Imported ${imported} new traders. Re-run every 5 minutes via cron to discover new ones.`,
+    note: `Scanned recent trades + events. Found ${traders.length} unique wallets. Imported ${imported} new. Re-run via cron every 5 minutes.`,
   };
 }

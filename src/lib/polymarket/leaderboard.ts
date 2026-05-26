@@ -189,11 +189,12 @@ export async function getLeaderboard(options?: {
     | 'consistency'
     | 'totalVolumeUsd';
 }): Promise<LeaderboardEntry[]> {
-  const { categorySlug, minTrades = 5, limit = 50, sortBy = 'edgeScore' } = options ?? {};
+  const { categorySlug, minTrades = 0, limit = 50, sortBy = 'edgeScore' } = options ?? {};
 
-  const where: Record<string, unknown> = {
-    totalTrades: { gte: minTrades },
-  };
+  const where: Record<string, unknown> = {};
+  if (minTrades > 0) {
+    where.totalTrades = { gte: minTrades };
+  }
 
   if (categorySlug) {
     where.categories = { has: categorySlug };

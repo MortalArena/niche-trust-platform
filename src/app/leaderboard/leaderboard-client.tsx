@@ -251,29 +251,33 @@ export function LeaderboardClient() {
 
       {!loading && !error && filteredTraders.length === 0 && (
         <div className="rounded-xl border border-dashed border-[var(--border)] py-16 text-center">
-          <h2 className="text-lg font-semibold text-[var(--text-primary)]">No traders yet</h2>
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">
-            Run the seed job to pull top Polymarket wallets into the intelligence pipeline.
+          <h2 className="text-lg font-semibold text-[var(--text-primary)]">Building trader index…</h2>
+          <p className="mx-auto mt-2 max-w-md text-sm text-[var(--text-secondary)]">
+            Polymarket has no &quot;list all users&quot; API. We discover wallets from live trades and events,
+            then score them. Click below once — takes 1–3 minutes locally.
           </p>
           <button
             type="button"
             onClick={async () => {
               try {
                 setLoading(true);
-                await fetch('/api/leaderboard/seed', { method: 'POST' });
+                setError(null);
+                const res = await fetch('/api/leaderboard/populate?sync=40', { method: 'POST' });
+                const json = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
                 await fetchLeaderboard(
                   selectedBoard,
                   selectedCategory === 'all' ? '' : selectedCategory
                 );
-              } catch {
-                setError('Seed failed');
+              } catch (e) {
+                setError((e as Error).message);
               } finally {
                 setLoading(false);
               }
             }}
             className="mt-4 rounded-lg bg-[var(--accent)] px-5 py-2.5 text-sm font-semibold text-white"
           >
-            Seed top traders
+            Discover &amp; score traders now
           </button>
         </div>
       )}

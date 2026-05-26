@@ -11,10 +11,21 @@ import { logger } from '@/lib/logger';
  * 
  * Intended for: admin panel, cron job, or manual trigger.
  */
+function isAuthorized(req: NextRequest, sessionUserId?: string | null): boolean {
+  if (process.env.NODE_ENV !== 'production') return true;
+  if (sessionUserId) return true;
+  const apiKey = req.headers.get('x-api-key');
+  const authHeader = req.headers.get('authorization');
+  return (
+    apiKey === process.env.CRON_SECRET ||
+    authHeader === `Bearer ${process.env.CRON_SECRET}`
+  );
+}
+
 export async function POST(req: NextRequest) {
   try {
     const session = await auth();
-    if (!session?.user?.id) {
+    if (!isAuthorized(req, session?.user?.id)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

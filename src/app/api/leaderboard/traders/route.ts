@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const categorySlug = searchParams.get('category') ?? undefined;
-    const minTrades = Number(searchParams.get('minTrades')) || 5;
+    const minTrades = Number(searchParams.get('minTrades')) || 0;
     const limit = Math.min(Number(searchParams.get('limit')) || 50, 200);
 
     // Validate category if provided

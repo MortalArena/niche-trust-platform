@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncPolymarketTrader } from '@/lib/polymarket/leaderboard';
-import { discoverAndImportAll } from '@/lib/polymarket/discovery';
+import { discoverAndImportFast } from '@/lib/polymarket/discovery';
 import { refreshPrecomputedRankings } from '@/lib/intelligence/rankings';
 import { prisma } from '@/lib/db';
 import { logger } from '@/lib/logger';
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   try {
     // ── Phase 1: Discover new traders ──
     logger.info('Phase 1: Discovering new traders');
-    const discovery = await discoverAndImportAll();
+    const discovery = await discoverAndImportFast(1500);
     phases.discovery = discovery;
 
     // ── Phase 2: Sync unsynced traders ──
@@ -42,14 +42,15 @@ export async function GET(req: NextRequest) {
           { totalTrades: 0 }, // Never synced
         ],
       },
-      take: 100,
+      take: 200,
+      orderBy: { lastSyncedAt: 'asc' },
     });
     phases.unsyncedCount = unsynced.length;
 
     const syncResults: { wallet: string; category: string; synced: boolean; trustScore?: number; error?: string }[] = [];
 
-    for (let i = 0; i < unsynced.length; i += 3) {
-      const batch = unsynced.slice(i, i + 3);
+    for (let i = 0; i < unsynced.length; i += 5) {
+      const batch = unsynced.slice(i, i + 5);
       const batchResults = await Promise.allSettled(
         batch.map(async (trader) => {
           const category = trader.categories[0] ?? 'politics';
