@@ -262,9 +262,14 @@ export function LeaderboardClient() {
               try {
                 setLoading(true);
                 setError(null);
-                const res = await fetch('/api/leaderboard/populate?sync=40', { method: 'POST' });
-                const json = await res.json().catch(() => ({}));
-                if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+                const d1 = await fetch('/api/leaderboard/populate?discoverOnly=1', { method: 'POST' });
+                const j1 = await d1.json().catch(() => ({}));
+                if (!d1.ok) throw new Error(j1.error ?? 'Discovery failed');
+                const d2 = await fetch('/api/leaderboard/populate?syncOnly=1&sync=25', {
+                  method: 'POST',
+                });
+                const j2 = await d2.json().catch(() => ({}));
+                if (!d2.ok) throw new Error(j2.error ?? 'Scoring failed');
                 await fetchLeaderboard(
                   selectedBoard,
                   selectedCategory === 'all' ? '' : selectedCategory

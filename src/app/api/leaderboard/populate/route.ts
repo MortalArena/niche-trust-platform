@@ -28,14 +28,32 @@ export async function POST(req: NextRequest) {
   }
 
   const syncParam = req.nextUrl.searchParams.get('sync');
+  const discoverOnly = req.nextUrl.searchParams.get('discoverOnly') === '1';
+  const syncOnly = req.nextUrl.searchParams.get('syncOnly') === '1';
   const syncLimit = Math.min(Number(syncParam) || 20, 50);
   const start = Date.now();
 
   try {
-    const deep = req.nextUrl.searchParams.get('deep') === '1';
-    const discovery = deep
-      ? await (await import('@/lib/polymarket/discovery')).discoverAndImportAll()
-      : await discoverAndImportFast(2500);
+    let discovery: Awaited<ReturnType<typeof discoverAndImportFast>> | null = null;
+
+    if (!syncOnly) {
+      const deep = req.nextUrl.searchParams.get('deep') === '1';
+      discovery = deep
+        ? await (await import('@/lib/polymarket/discovery')).discoverAndImportAll()
+        : await discoverAndImportFast(2500);
+    }
+
+    if (discoverOnly) {
+      const totalInDB = await prisma.polymarketTrader.count();
+      return NextResponse.json({
+        success: true,
+        phase: 'discover',
+        discovery,
+        totalInDB,
+        next: `POST /api/leaderboard/populate?syncOnly=1&sync=${syncLimit}`,
+        elapsedSec: ((Date.now() - start) / 1000).toFixed(1),
+      });
+    }
 
     const toSync = await prisma.polymarketTrader.findMany({
       where: {
