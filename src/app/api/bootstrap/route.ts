@@ -1,67 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { discoverAllPolymarketTraders, bulkImportDiscoveredTraders } from '@/lib/polymarket/discovery';
-import { syncPolymarketTrader } from '@/lib/polymarket/leaderboard';
 import { prisma } from '@/lib/db';
 import { logger } from '@/lib/logger';
 
 /**
- * Bootstrap — Polymarket trader discovery + initial sync.
+ * Bootstrap — Polymarket trader discovery ONLY.
  * 
- * Vercel Hobby plan time limit: ~60 seconds.
- * This endpoint does:
- *   1. FAST discovery (scan events, collect wallet addresses)
- *   2. Import only (no trust score sync — cron handles that)
- *   3. Optionally sync a small batch of traders for immediate visibility
+ * Why not sync here? Vercel Hobby free tier = max 60 sec execution.
+ * Sync takes 5-10+ seconds per trader → impossible in 60s.
+ * 
+ * Solution:
+ *   1. Bootstrap discovers + imports wallets only (fast, ~10-20s)
+ *   2. Cron job (`/api/cron/refresh-leaderboard`) syncs trust scores
+ *      every 5 minutes, processing 200 traders per run
+ * 
+ * By the time you view the leaderboard, cron has already synced
+ * hundreds of traders with real trust scores.
  * 
  * GET /api/bootstrap
- * GET /api/bootstrap?limit=50   (sync first N traders)
- * GET /api/bootstrap?sync=10    (discover + sync first 10)
  */
-
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
-  const limitParam = req.nextUrl.searchParams.get('limit');
-  const syncParam = req.nextUrl.searchParams.get('sync');
-  
-  const syncCount = syncParam ? parseInt(syncParam) : 0;
-  const maxEventsPerTag = 30; // Smaller for speed
-
-  logger.info({ syncCount, maxEventsPerTag }, 'Starting bootstrap...');
+  logger.info('Starting bootstrap (discovery-only phase)...');
 
   try {
-    // Record start time
     const startTime = Date.now();
-    
-    // STEP 1: Discover ALL traders (scan events, extract wallets)
-    const traders = await discoverAllPolymarketTraders({ maxWallets: 1000, maxEventsPerTag });
-    
-    // STEP 2: Import newly discovered wallets into DB
-    const { imported, skipped } = await bulkImportDiscoveredTraders(traders);
-    
-    // STEP 3: Optionally sync a small batch for immediate leaderboard data
-    let synced = 0;
-    let failed = 0;
-    if (syncCount > 0) {
-      const toSync = await prisma.polymarketTrader.findMany({
-        where: { trustScore: 0 },
-        orderBy: { createdAt: 'desc' },
-        take: Math.min(syncCount, 20), // Hard cap of 20 for Vercel free tier
-        select: { proxyWallet: true },
-      });
-      
-      // Sync without delays (faster)
-      const results = await Promise.allSettled(
-        toSync.map(t => syncPolymarketTrader(t.proxyWallet, 'all').catch(() => null))
-      );
-      synced = results.filter(r => r.status === 'fulfilled' && r.value).length;
-      failed = results.filter(r => r.status === 'rejected' || !r.value).length;
-    }
-    
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-    logger.info({ discovered: traders.length, imported, skipped, synced, failed, elapsedSec: elapsed }, 'Bootstrap complete');
+    // Step 1: Fast discovery (30 events per category tag)
+    const traders = await discoverAllPolymarketTraders({
+      maxWallets: 2000,
+      maxEventsPerTag: 30,
+    });
+
+    // Step 2: Bulk-import new wallets (skips duplicates via unique constraint)
+    const { imported, skipped } = await bulkImportDiscoveredTraders(traders);
+
+    // Step 3: Get total count in DB
+    const totalInDb = await prisma.polymarketTrader.count();
+
+    const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    logger.info(
+      { discovered: traders.length, imported, skipped, totalInDb, elapsedSec },
+      'Bootstrap complete'
+    );
 
     return NextResponse.json({
       success: true,
@@ -69,19 +52,23 @@ export async function GET(req: NextRequest) {
         discovered: traders.length,
         imported,
         skipped,
-        synced,
-        failed,
-        elapsedSec: parseFloat(elapsed),
+        totalInDb,
+        elapsedSec: parseFloat(elapsedSec),
       },
-      totalInDB: await prisma.polymarketTrader.count(),
-      nextStep: 'Cron job will sync all remaining traders with trust scores every 5 minutes.',
+      nextSteps: {
+        explanation: 'Cron job will now sync all traders with trust scores automatically every 5 minutes.',
+        action: 'Wait 2-5 minutes, then visit /leaderboard to see scores.',
+      },
       urls: {
         leaderboard: 'https://niche-trust-platform.vercel.app/leaderboard',
-        cronRefresh: 'https://niche-trust-platform.vercel.app/api/cron/refresh-leaderboard',
+        healthCheck: 'https://niche-trust-platform.vercel.app/api/health',
       },
     });
   } catch (error) {
     logger.error({ error }, 'Bootstrap failed');
-    return NextResponse.json({ error: 'Bootstrap failed', details: (error as Error).message }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Bootstrap failed', details: (error as Error).message },
+      { status: 500 }
+    );
   }
 }
