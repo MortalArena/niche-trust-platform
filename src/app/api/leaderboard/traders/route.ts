@@ -34,6 +34,7 @@ export async function GET(req: NextRequest) {
       | 'trustScore'
       | 'roi'
       | 'winRate'
+      | 'consistency'
       | 'totalVolumeUsd';
 
     const leaderboard = await getLeaderboard({

@@ -42,3 +42,26 @@ export const RANKING_BOARDS = [
 ] as const;
 
 export type RankingBoardId = (typeof RANKING_BOARDS)[number];
+
+export const RANKING_BOARD_LABELS: Record<RankingBoardId, { label: string; description: string }> = {
+  top_edge: {
+    label: 'Edge Score',
+    description: 'Composite reputation: ROI, consistency, risk, timing, volume',
+  },
+  highest_roi_30d: {
+    label: 'Highest ROI',
+    description: 'Best return on resolved positions',
+  },
+  best_win_rate: {
+    label: 'Win Rate',
+    description: 'Highest win % (min. 20 trades)',
+  },
+  most_consistent: {
+    label: 'Most Consistent',
+    description: 'Stable month-over-month performance',
+  },
+  smart_money_volume: {
+    label: 'Smart Money',
+    description: 'Highest notional volume traded',
+  },
+};

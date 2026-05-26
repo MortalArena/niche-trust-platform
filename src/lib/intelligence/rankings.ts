@@ -1,6 +1,11 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db';
 import type { LeaderboardEntry } from '@/lib/polymarket/leaderboard';
 import type { RankingBoardId } from './edge-score';
+
+function asJsonPayload(entries: LeaderboardEntry[]): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(entries)) as Prisma.InputJsonValue;
+}
 
 async function topTraders(where: Record<string, unknown>, orderBy: Record<string, 'desc'>, limit: number) {
   const rows = await prisma.polymarketTrader.findMany({
@@ -75,14 +80,14 @@ export async function refreshPrecomputedRankings(): Promise<Record<string, numbe
         board_categorySlug: { board, categorySlug: categorySlug ?? '' },
       },
       update: {
-        payload: entries,
+        payload: asJsonPayload(entries),
         traderCount: entries.length,
         computedAt: new Date(),
       },
       create: {
         board,
         categorySlug: categorySlug ?? '',
-        payload: entries,
+        payload: asJsonPayload(entries),
         traderCount: entries.length,
       },
     });
@@ -104,7 +109,7 @@ export async function getPrecomputedRanking(
 
   if (!row) return { entries: [], computedAt: null };
   return {
-    entries: row.payload as LeaderboardEntry[],
+    entries: row.payload as unknown as LeaderboardEntry[],
     computedAt: row.computedAt.toISOString(),
   };
 }

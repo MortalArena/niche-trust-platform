@@ -181,7 +181,13 @@ export async function getLeaderboard(options?: {
   categorySlug?: string;
   minTrades?: number;
   limit?: number;
-  sortBy?: 'edgeScore' | 'trustScore' | 'roi' | 'winRate' | 'totalVolumeUsd';
+  sortBy?:
+    | 'edgeScore'
+    | 'trustScore'
+    | 'roi'
+    | 'winRate'
+    | 'consistency'
+    | 'totalVolumeUsd';
 }): Promise<LeaderboardEntry[]> {
   const { categorySlug, minTrades = 5, limit = 50, sortBy = 'edgeScore' } = options ?? {};
 
