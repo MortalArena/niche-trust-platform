@@ -1,85 +1,84 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { discoverAndImportAll } from '@/lib/polymarket/discovery';
+import { discoverAllPolymarketTraders, bulkImportDiscoveredTraders } from '@/lib/polymarket/discovery';
 import { syncPolymarketTrader } from '@/lib/polymarket/leaderboard';
 import { prisma } from '@/lib/db';
 import { logger } from '@/lib/logger';
 
 /**
- * Bootstrap — FULL Polymarket trader discovery + sync.
+ * Bootstrap — Polymarket trader discovery + initial sync.
  * 
- * This does NOT use fake seed wallets. It scans ALL active Polymarket
- * events across ALL categories, finds EVERY trader wallet that has
- * placed a trade, and syncs them all with trust scores.
+ * Vercel Hobby plan time limit: ~60 seconds.
+ * This endpoint does:
+ *   1. FAST discovery (scan events, collect wallet addresses)
+ *   2. Import only (no trust score sync — cron handles that)
+ *   3. Optionally sync a small batch of traders for immediate visibility
  * 
- * GET /api/bootstrap?secret=YOUR_SECRET
- * GET /api/bootstrap?secret=YOUR_SECRET&limit=1000
+ * GET /api/bootstrap
+ * GET /api/bootstrap?limit=50   (sync first N traders)
+ * GET /api/bootstrap?sync=10    (discover + sync first 10)
  */
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300; // 5 minutes — allows full scan
+export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
-  // No auth required — this is a public bootstrap endpoint.
-  // It takes 2-5 minutes to scan ALL Polymarket events and compute trust scores.
-
   const limitParam = req.nextUrl.searchParams.get('limit');
-  const maxWalletsToSync = limitParam ? parseInt(limitParam) : 500;
+  const syncParam = req.nextUrl.searchParams.get('sync');
+  
+  const syncCount = syncParam ? parseInt(syncParam) : 0;
+  const maxEventsPerTag = 30; // Smaller for speed
 
-  logger.info({ maxWalletsToSync }, 'Starting FULL Polymarket bootstrap...');
+  logger.info({ syncCount, maxEventsPerTag }, 'Starting bootstrap...');
 
   try {
-    // STEP 1: Discover ALL traders from Polymarket events (scan all categories)
-    const discoveryResult = await discoverAndImportAll();
+    // Record start time
+    const startTime = Date.now();
     
-    const { discovered, imported, skipped } = discoveryResult;
-    logger.info({ discovered, imported, skipped }, 'Discovery complete. Now syncing traders with trust scores...');
-
-    // STEP 2: Now sync the most recently added traders (highest potential value)
-    const tradersToSync = await prisma.polymarketTrader.findMany({
-      where: { 
-        OR: [
-          { trustScore: 0 },
-          { lastSyncedAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } }
-        ]
-      },
-      orderBy: { createdAt: 'desc' },
-      take: maxWalletsToSync,
-      select: { proxyWallet: true },
-    });
-
-    logger.info({ totalToSync: tradersToSync.length }, 'Syncing discovered traders...');
-
-    let syncedCount = 0;
-    let failedCount = 0;
-
-    // Sync in batches to avoid rate limits
-    const batchSize = 10;
-    for (let i = 0; i < tradersToSync.length; i += batchSize) {
-      const batch = tradersToSync.slice(i, i + batchSize);
-      const results = await Promise.allSettled(
-        batch.map(t => syncPolymarketTrader(t.proxyWallet, 'all'))
-      );
+    // STEP 1: Discover ALL traders (scan events, extract wallets)
+    const traders = await discoverAllPolymarketTraders({ maxWallets: 1000, maxEventsPerTag });
+    
+    // STEP 2: Import newly discovered wallets into DB
+    const { imported, skipped } = await bulkImportDiscoveredTraders(traders);
+    
+    // STEP 3: Optionally sync a small batch for immediate leaderboard data
+    let synced = 0;
+    let failed = 0;
+    if (syncCount > 0) {
+      const toSync = await prisma.polymarketTrader.findMany({
+        where: { trustScore: 0 },
+        orderBy: { createdAt: 'desc' },
+        take: Math.min(syncCount, 20), // Hard cap of 20 for Vercel free tier
+        select: { proxyWallet: true },
+      });
       
-      for (const r of results) {
-        if (r.status === 'fulfilled' && r.value) syncedCount++;
-        else failedCount++;
-      }
-
-      // Small delay between batches to be nice to Polymarket API
-      if (i + batchSize < tradersToSync.length) {
-        await new Promise(r => setTimeout(r, 1000));
-      }
+      // Sync without delays (faster)
+      const results = await Promise.allSettled(
+        toSync.map(t => syncPolymarketTrader(t.proxyWallet, 'all').catch(() => null))
+      );
+      synced = results.filter(r => r.status === 'fulfilled' && r.value).length;
+      failed = results.filter(r => r.status === 'rejected' || !r.value).length;
     }
+    
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
-    // STEP 3: Trigger leaderboard refresh
-    logger.info({ syncedCount, failedCount }, 'Bootstrap fully complete');
+    logger.info({ discovered: traders.length, imported, skipped, synced, failed, elapsedSec: elapsed }, 'Bootstrap complete');
 
     return NextResponse.json({
       success: true,
-      discovery: { discovered, imported, skipped, note: 'Scanned ALL Polymarket events across ALL categories' },
-      sync: { attempted: tradersToSync.length, syncedCount, failedCount },
+      bootstrap: {
+        discovered: traders.length,
+        imported,
+        skipped,
+        synced,
+        failed,
+        elapsedSec: parseFloat(elapsed),
+      },
       totalInDB: await prisma.polymarketTrader.count(),
-      note: `Full bootstrap complete. Synced ${syncedCount} traders with trust scores. Cron will sync the rest every 5 minutes.`,
+      nextStep: 'Cron job will sync all remaining traders with trust scores every 5 minutes.',
+      urls: {
+        leaderboard: 'https://niche-trust-platform.vercel.app/leaderboard',
+        cronRefresh: 'https://niche-trust-platform.vercel.app/api/cron/refresh-leaderboard',
+      },
     });
   } catch (error) {
     logger.error({ error }, 'Bootstrap failed');

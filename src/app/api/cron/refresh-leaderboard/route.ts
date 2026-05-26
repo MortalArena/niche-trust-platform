@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { syncPolymarketTrader } from '@/lib/polymarket/leaderboard';
 import { discoverAndImportAll } from '@/lib/polymarket/discovery';
+import { refreshPrecomputedRankings } from '@/lib/intelligence/rankings';
 import { prisma } from '@/lib/db';
 import { logger } from '@/lib/logger';
 
@@ -83,6 +84,10 @@ export async function GET(req: NextRequest) {
       synced: syncResults.filter(r => r.synced).length,
       failed: syncResults.filter(r => !r.synced).length,
     };
+
+    // ── Phase 3: Precompute ranking boards (Edge, ROI, volume, …) ──
+    logger.info('Phase 3: Precomputing intelligence rankings');
+    phases.rankings = await refreshPrecomputedRankings();
 
     const duration = Date.now() - startTime;
     logger.info({ durationMs: duration, phases }, 'Leaderboard refresh completed');

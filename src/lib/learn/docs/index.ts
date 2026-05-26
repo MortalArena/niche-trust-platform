@@ -34,7 +34,53 @@ const DOCS: LearnDoc[] = [
           'Matrix encrypted rooms per paid group',
           '5% platform commission on subscriptions',
           'Polymarket Gamma browse + Kalshi/Manifold platform pages',
+          'Polymarket Intelligence Engine — live leaderboard + Edge Score (refreshed every 5 min)',
           'Example MCP config + Agent Skill files in the repo (optional integrations)',
+        ],
+      },
+    ],
+  },
+  {
+    slug: 'intelligence-engine',
+    title: 'Intelligence engine',
+    description:
+      'Data pipeline + wallet analytics + precomputed rankings — the core moat of Niche Trust.',
+    blocks: [
+      {
+        type: 'p',
+        text: 'This is not a chat app first. It is a Bloomberg-style reputation layer for Polymarket traders: discover wallets, score them, rank them, and let users compete for status.',
+      },
+      { type: 'h2', text: 'Architecture (4 phases)' },
+      {
+        type: 'ol',
+        items: [
+          'Data collection — Polymarket Gamma + Data API (trades, positions, profiles). Incremental sync every 5 minutes.',
+          'Wallet intelligence — ROI, win rate, volume, risk, consistency, timing proxy, Edge Score.',
+          'Ranking engine — precomputed boards: Top Edge, Highest ROI, Best Win Rate, Most Consistent, Smart Money Volume.',
+          'Live UI — /leaderboard reads from PostgreSQL cache (fast, no live API on page load).',
+        ],
+      },
+      { type: 'h2', text: 'Edge Score formula' },
+      {
+        type: 'code',
+        language: 'text',
+        code: `EDGE =
+  40% ROI (normalized)
++ 25% Consistency
++ 15% Risk management (inverse drawdown)
++ 10% Timing activity
++ 10% Trade volume / month`,
+      },
+      { type: 'h2', text: 'Cron on production' },
+      {
+        type: 'p',
+        text: 'Vercel cron hits GET /api/cron/refresh-leaderboard every 5 minutes (requires CRON_SECRET). Health: GET /api/intelligence/status',
+      },
+      {
+        type: 'links',
+        items: [
+          { href: '/leaderboard', label: 'Open Intelligence leaderboard →' },
+          { href: '/api/intelligence/status', label: 'Pipeline status JSON →' },
         ],
       },
     ],

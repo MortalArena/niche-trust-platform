@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { href: '/markets', key: 'markets' as const },
   { href: '/polymarket', key: 'polymarket' as const, accent: true },
   { href: '/groups', key: 'groups' as const },
+  { href: '/leaderboard', key: 'leaderboard' as const, accent: true },
   { href: '/experts', key: 'experts' as const },
   { href: '/platforms', key: 'platforms' as const },
   { href: '/learn', key: 'learn' as const, accentBlue: true },

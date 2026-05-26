@@ -402,12 +402,16 @@ model PolymarketTrader {
   
   // 📊 Computed trust metrics
   trustScore     Decimal  @default(0)
+  edgeScore      Decimal  @default(0)
   winRate        Decimal  @default(0)
   roi            Decimal  @default(0)
   maxDrawdown    Decimal  @default(0)
   consistency    Decimal  @default(0)
   profitFactor   Decimal  @default(0)
   riskLevel      String   @default("MEDIUM")
+  avgTradeSize   Decimal  @default(0)
+  totalVolumeUsd Decimal  @default(0)
+  timingScore    Decimal  @default(50)
   
   // 📈 Stats
   totalTrades    Int      @default(0)
@@ -421,6 +425,22 @@ model PolymarketTrader {
   createdAt      DateTime @default(now())
 
   @@index([trustScore])
+  @@index([edgeScore])
+  @@index([roi])
   @@index([categories])
   @@index([lastSyncedAt])
+}
+
+/// Precomputed ranking boards (refreshed by cron — site reads from cache)
+model IntelligenceRanking {
+  id           String   @id @default(cuid())
+  board        String
+  categorySlug String?
+  payload      Json
+  traderCount  Int      @default(0)
+  computedAt   DateTime @default(now())
+
+  @@unique([board, categorySlug])
+  @@index([board])
+  @@index([computedAt])
 }

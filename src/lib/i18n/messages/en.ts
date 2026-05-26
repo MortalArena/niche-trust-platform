@@ -19,6 +19,7 @@ export const en = {
     markets: 'Markets',
     groups: 'Expert groups',
     experts: 'Experts',
+    leaderboard: 'Intelligence',
     platforms: 'Platforms',
     polymarket: 'Polymarket live',
     dashboard: 'Dashboard',

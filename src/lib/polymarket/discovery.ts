@@ -58,8 +58,10 @@ async function fetchTradesByCondition(
  */
 export async function discoverAllPolymarketTraders(options?: {
   maxWallets?: number;
+  maxEventsPerTag?: number;
 }): Promise<PolymarketTraderBrief[]> {
-  const maxWallets = options?.maxWallets ?? 50000; // Massive default
+  const maxWallets = options?.maxWallets ?? 50000;
+  const maxEventsPerTag = options?.maxEventsPerTag ?? 100;
   const discoveredSet = new Set<string>();
 
   // Track what we already know
@@ -81,7 +83,7 @@ export async function discoverAllPolymarketTraders(options?: {
         // Fetch MANY events per tag (not just 10)
         const events = await listEvents({
           tag_slug: tagSlug,
-          limit: 100, // Get 100 events per tag
+          limit: maxEventsPerTag,
           active: true,
           closed: false,
           order: 'volume24hr',

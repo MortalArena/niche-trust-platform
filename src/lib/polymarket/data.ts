@@ -49,3 +49,13 @@ export async function getPositionValue(userAddress: string): Promise<{ value?: n
     user: normalizeAddress(userAddress),
   });
 }
+
+export async function getClosedPositionsForUser(
+  userAddress: string,
+  limit = 100
+): Promise<PolymarketPosition[]> {
+  return dataFetch<PolymarketPosition[]>(DATA.closedPositions, {
+    user: normalizeAddress(userAddress),
+    limit,
+  });
+}

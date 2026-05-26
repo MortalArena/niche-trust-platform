@@ -29,10 +29,18 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    const sortBy = (searchParams.get('sortBy') ?? 'edgeScore') as
+      | 'edgeScore'
+      | 'trustScore'
+      | 'roi'
+      | 'winRate'
+      | 'totalVolumeUsd';
+
     const leaderboard = await getLeaderboard({
       categorySlug,
       minTrades,
       limit,
+      sortBy,
     });
 
     return NextResponse.json({

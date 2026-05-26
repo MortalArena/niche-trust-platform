@@ -1,11 +1,11 @@
 import { prisma } from '@/lib/db';
-import { getTradesForUser } from '@/lib/polymarket/data';
+import { getTradesForUser, getClosedPositionsForUser } from '@/lib/polymarket/data';
 import { resolvePolymarketProfile } from '@/lib/polymarket/profiles';
 import { calculateTrustScore } from '@/lib/analytics/trustscore';
-import type { TradeRecord } from '@/lib/analytics/types';
+import { calculateEdgeScore } from '@/lib/intelligence/edge-score';
+import { tradesFromPolymarket } from '@/lib/polymarket/trade-metrics';
+import { buildMonthlyReturns } from '@/lib/analytics/trades-from-txs';
 import { logger } from '@/lib/logger';
-
-// ─── Types ──────────────────────────────────────────────────────
 
 export interface PolymarketTraderBrief {
   proxyWallet: string;
@@ -14,6 +14,7 @@ export interface PolymarketTraderBrief {
   verifiedBadge: boolean | null;
   xUsername: string | null;
   trustScore: number;
+  edgeScore: number;
   winRate: number;
   roi: number;
   maxDrawdown: number;
@@ -22,6 +23,9 @@ export interface PolymarketTraderBrief {
   riskLevel: string;
   totalTrades: number;
   activityDays: number;
+  avgTradeSize: number;
+  totalVolumeUsd: number;
+  timingScore: number;
   categories: string[];
   polymarketUrl: string | undefined;
 }
@@ -33,9 +37,12 @@ export interface LeaderboardEntry {
 
 const POLYMARKET_SITE = 'https://polymarket.com';
 
+function mergeCategories(existing: string[], next: string): string[] {
+  return [...new Set([...existing, next])];
+}
+
 /**
- * Sync a single Polymarket trader by proxy wallet address.
- * Fetches all trades → computes TrustScore → stores/updates in DB.
+ * Sync a single Polymarket wallet: incremental fetch → Edge Score → DB cache.
  */
 export async function syncPolymarketTrader(
   proxyWallet: string,
@@ -45,36 +52,53 @@ export async function syncPolymarketTrader(
     const profile = await resolvePolymarketProfile(proxyWallet);
     const queryAddress = (profile?.proxyWallet ?? proxyWallet).toLowerCase();
 
-    const trades = await getTradesForUser(queryAddress, 200);
-    if (!trades.length) return null;
+    const [trades, closed] = await Promise.all([
+      getTradesForUser(queryAddress, 300),
+      getClosedPositionsForUser(queryAddress, 100).catch(() => []),
+    ]);
 
-    const tradeRecords: TradeRecord[] = trades.map((t) => {
-      const pnl = t.side === 'SELL' ? t.size * t.price * 0.02 : -t.size * t.price * 0.01;
-      const ts = t.timestamp > 1e12 ? Math.floor(t.timestamp / 1000) : t.timestamp;
-      return {
-        pnl,
-        entryPrice: t.price,
-        exitPrice: t.price,
-        size: t.size,
-        entryTime: ts,
-        exitTime: ts,
-      };
-    });
+    if (!trades.length && !closed.length) return null;
 
-    const activityDays = new Set(trades.map((t) => new Date(t.timestamp * 1000).toDateString())).size;
+    const { tradeRecords, totalVolumeUsd, avgTradeSize, timingScore } = tradesFromPolymarket(
+      trades,
+      closed
+    );
+
+    const activityDays = new Set(
+      trades.map((t) => new Date(t.timestamp * 1000).toDateString())
+    ).size;
+
     const equityCurve = tradeRecords.reduce<number[]>((curve, tr) => {
       const prev = curve.length ? curve[curve.length - 1]! : 0;
       curve.push(prev + tr.pnl);
       return curve;
     }, []);
 
+    const monthlyReturns = buildMonthlyReturns(tradeRecords);
+    const tradesPerMonth = tradeRecords.length / Math.max(1, activityDays / 30);
+
     const result = calculateTrustScore({
       trades: tradeRecords,
-      monthlyReturns: [],
+      monthlyReturns,
       equityCurve,
       tradeCount: tradeRecords.length,
-      activityDays,
+      activityDays: Math.max(activityDays, 1),
     });
+
+    const edgeScore = calculateEdgeScore({
+      roi: result.roi,
+      consistency: result.consistency,
+      maxDrawdown: result.maxDrawdown,
+      timingScore,
+      tradesPerMonth,
+    });
+
+    const existing = await prisma.polymarketTrader.findUnique({
+      where: { proxyWallet: queryAddress },
+      select: { categories: true },
+    });
+
+    const categories = mergeCategories(existing?.categories ?? [], categorySlug);
 
     const brief: PolymarketTraderBrief = {
       proxyWallet: queryAddress,
@@ -83,6 +107,7 @@ export async function syncPolymarketTrader(
       verifiedBadge: profile?.verifiedBadge ?? null,
       xUsername: profile?.xUsername ?? null,
       trustScore: result.trustScore,
+      edgeScore,
       winRate: result.winRate,
       roi: result.roi,
       maxDrawdown: result.maxDrawdown,
@@ -91,11 +116,13 @@ export async function syncPolymarketTrader(
       riskLevel: result.riskLevel,
       totalTrades: tradeRecords.length,
       activityDays,
-      categories: [categorySlug],
-      polymarketUrl: queryAddress ? `${POLYMARKET_SITE}/profile/${queryAddress}` : undefined,
+      avgTradeSize,
+      totalVolumeUsd,
+      timingScore,
+      categories,
+      polymarketUrl: `${POLYMARKET_SITE}/profile/${queryAddress}`,
     };
 
-    // Store/update in DB cache
     await prisma.polymarketTrader.upsert({
       where: { proxyWallet: queryAddress },
       update: {
@@ -104,6 +131,7 @@ export async function syncPolymarketTrader(
         verifiedBadge: brief.verifiedBadge ?? false,
         xUsername: brief.xUsername,
         trustScore: brief.trustScore,
+        edgeScore: brief.edgeScore,
         winRate: brief.winRate,
         roi: brief.roi,
         maxDrawdown: brief.maxDrawdown,
@@ -112,7 +140,10 @@ export async function syncPolymarketTrader(
         riskLevel: brief.riskLevel,
         totalTrades: brief.totalTrades,
         activityDays: brief.activityDays,
-        categories: { push: [categorySlug] },
+        avgTradeSize: brief.avgTradeSize,
+        totalVolumeUsd: brief.totalVolumeUsd,
+        timingScore: brief.timingScore,
+        categories,
         lastSyncedAt: new Date(),
       },
       create: {
@@ -122,6 +153,7 @@ export async function syncPolymarketTrader(
         verifiedBadge: brief.verifiedBadge ?? false,
         xUsername: brief.xUsername,
         trustScore: brief.trustScore,
+        edgeScore: brief.edgeScore,
         winRate: brief.winRate,
         roi: brief.roi,
         maxDrawdown: brief.maxDrawdown,
@@ -130,7 +162,10 @@ export async function syncPolymarketTrader(
         riskLevel: brief.riskLevel,
         totalTrades: brief.totalTrades,
         activityDays: brief.activityDays,
-        categories: [categorySlug],
+        avgTradeSize: brief.avgTradeSize,
+        totalVolumeUsd: brief.totalVolumeUsd,
+        timingScore: brief.timingScore,
+        categories,
         lastSyncedAt: new Date(),
       },
     });
@@ -142,16 +177,13 @@ export async function syncPolymarketTrader(
   }
 }
 
-/**
- * Get leaderboard from DB cache, sorted by trustScore descending.
- * Filters by category and minimum trade count.
- */
 export async function getLeaderboard(options?: {
   categorySlug?: string;
   minTrades?: number;
   limit?: number;
+  sortBy?: 'edgeScore' | 'trustScore' | 'roi' | 'winRate' | 'totalVolumeUsd';
 }): Promise<LeaderboardEntry[]> {
-  const { categorySlug, minTrades = 5, limit = 50 } = options ?? {};
+  const { categorySlug, minTrades = 5, limit = 50, sortBy = 'edgeScore' } = options ?? {};
 
   const where: Record<string, unknown> = {
     totalTrades: { gte: minTrades },
@@ -161,9 +193,11 @@ export async function getLeaderboard(options?: {
     where.categories = { has: categorySlug };
   }
 
+  const orderBy = { [sortBy]: 'desc' as const };
+
   const traders = await prisma.polymarketTrader.findMany({
     where,
-    orderBy: { trustScore: 'desc' },
+    orderBy,
     take: limit,
   });
 
@@ -176,6 +210,7 @@ export async function getLeaderboard(options?: {
       verifiedBadge: t.verifiedBadge,
       xUsername: t.xUsername,
       trustScore: Number(t.trustScore),
+      edgeScore: Number(t.edgeScore),
       winRate: Number(t.winRate),
       roi: Number(t.roi),
       maxDrawdown: Number(t.maxDrawdown),
@@ -184,8 +219,34 @@ export async function getLeaderboard(options?: {
       riskLevel: t.riskLevel,
       totalTrades: t.totalTrades,
       activityDays: t.activityDays,
+      avgTradeSize: Number(t.avgTradeSize),
+      totalVolumeUsd: Number(t.totalVolumeUsd),
+      timingScore: Number(t.timingScore),
       categories: t.categories,
       polymarketUrl: t.proxyWallet ? `${POLYMARKET_SITE}/profile/${t.proxyWallet}` : undefined,
     },
   }));
+}
+
+export async function getIntelligenceStats() {
+  const [traderCount, lastSync, rankings] = await Promise.all([
+    prisma.polymarketTrader.count(),
+    prisma.polymarketTrader.findFirst({
+      orderBy: { lastSyncedAt: 'desc' },
+      select: { lastSyncedAt: true },
+    }),
+    prisma.intelligenceRanking.findMany({
+      select: { board: true, traderCount: true, computedAt: true },
+    }),
+  ]);
+
+  return {
+    traderCount,
+    lastSyncedAt: lastSync?.lastSyncedAt?.toISOString() ?? null,
+    rankings: rankings.map((r) => ({
+      board: r.board,
+      count: r.traderCount,
+      computedAt: r.computedAt.toISOString(),
+    })),
+  };
 }

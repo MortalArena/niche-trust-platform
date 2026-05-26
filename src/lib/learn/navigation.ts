@@ -17,6 +17,7 @@ export const LEARN_NAV: LearnNavSection[] = [
       { slug: 'quickstart', title: 'Quickstart', href: '/learn/quickstart' },
       { slug: 'documentation-scope', title: 'What we document', href: '/learn/documentation-scope' },
       { slug: 'platform-overview', title: 'Platform overview', href: '/learn/platform-overview' },
+      { slug: 'intelligence-engine', title: 'Intelligence engine', href: '/learn/intelligence-engine' },
     ],
   },
   {
