@@ -4,5 +4,8 @@
       "path": "/api/cron/refresh-leaderboard",
       "schedule": "*/5 * * * *"
     }
-  ]
+  ],
+  "installCommand": "pnpm install",
+  "buildCommand": "pnpm build",
+  "outputDirectory": ".next"
 }
